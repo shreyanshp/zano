@@ -35,13 +35,32 @@ jobs:
         with:
           arch: x64
 
-      - name: Set up Boost
+      - name: Set up Boost (pre-built binaries from SourceForge)
+        # MarkusJx/install-boost ships an archive whose 7z extraction
+        # refuses ~600 symlinks ("Dangerous link path was ignored")
+        # and exits with code 2 on Windows runners. Skip that and grab
+        # the official MSVC-prebuilt installer from sourceforge — same
+        # binaries Boost.org publishes for users, ~5-10 min total.
         id: boost
-        uses: MarkusJx/install-boost@v2.4.5
-        with:
-          boost_version: '1.82.0'
-          platform_version: 2022
-          toolset: msvc
+        shell: pwsh
+        run: |
+          $boostExe = "$Env:RUNNER_TEMP/boost.exe"
+          $boostDir = "C:/local/boost_1_82_0"
+          Invoke-WebRequest `
+            -Uri "https://sourceforge.net/projects/boost/files/boost-binaries/1.82.0/boost_1_82_0-msvc-14.3-64.exe/download" `
+            -OutFile $boostExe `
+            -UseBasicParsing
+          # Self-extracting installer; /SILENT runs unattended.
+          Start-Process -Wait -FilePath $boostExe `
+            -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/SP-","/DIR=$boostDir"
+          # Sanity check: confirm the libs landed at the path the
+          # CMake configure step will look for.
+          if (-not (Test-Path "$boostDir/lib64-msvc-14.3")) {
+            Write-Error "Boost lib64-msvc-14.3 missing at $boostDir"
+            exit 1
+          }
+          "BOOST_ROOT=$boostDir" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
+          "BOOST_LIBRARYDIR=$boostDir/lib64-msvc-14.3" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
 
       - name: Set up OpenSSL via vcpkg
         shell: pwsh
@@ -53,6 +72,7 @@ jobs:
       - name: Configure CMake
         env:
           BOOST_ROOT_OUT: ${{ steps.boost.outputs.BOOST_ROOT }}
+          BOOST_LIBRARYDIR_OUT: ${{ steps.boost.outputs.BOOST_LIBRARYDIR }}
         shell: pwsh
         run: |
           $openssl = "C:/vcpkg/installed/x64-windows-static-md"
@@ -65,6 +85,7 @@ jobs:
             -DBUILD_TESTS=FALSE `
             -DSTATIC=FALSE `
             -DBOOST_ROOT="$Env:BOOST_ROOT_OUT" `
+            -DBOOST_LIBRARYDIR="$Env:BOOST_LIBRARYDIR_OUT" `
             -DOPENSSL_ROOT_DIR="$openssl"
 
       - name: Build zano_wallet target only
