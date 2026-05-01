@@ -35,47 +35,61 @@ jobs:
         with:
           arch: x64
 
-      - name: Set up Boost (pre-built binaries from SourceForge)
-        # MarkusJx/install-boost ships an archive whose 7z extraction
-        # refuses ~600 symlinks ("Dangerous link path was ignored")
-        # and exits with code 2 on Windows runners. Skip that and grab
-        # the official MSVC-prebuilt installer from sourceforge — same
-        # binaries Boost.org publishes for users, ~5-10 min total.
-        id: boost
-        shell: pwsh
-        run: |
-          $boostExe = "$Env:RUNNER_TEMP/boost.exe"
-          $boostDir = "C:/local/boost_1_82_0"
-          Invoke-WebRequest `
-            -Uri "https://sourceforge.net/projects/boost/files/boost-binaries/1.82.0/boost_1_82_0-msvc-14.3-64.exe/download" `
-            -OutFile $boostExe `
-            -UseBasicParsing
-          # Self-extracting installer; /SILENT runs unattended.
-          Start-Process -Wait -FilePath $boostExe `
-            -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/SP-","/DIR=$boostDir"
-          # Sanity check: confirm the libs landed at the path the
-          # CMake configure step will look for.
-          if (-not (Test-Path "$boostDir/lib64-msvc-14.3")) {
-            Write-Error "Boost lib64-msvc-14.3 missing at $boostDir"
-            exit 1
-          }
-          "BOOST_ROOT=$boostDir" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
-          "BOOST_LIBRARYDIR=$boostDir/lib64-msvc-14.3" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
+      # Cache the entire vcpkg install so subsequent runs skip the
+      # ~40 min boost+openssl compile. Key on the manifest hash so any
+      # bump to the dep list invalidates cleanly.
+      - name: Cache vcpkg install
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\packages
+            C:\vcpkg\buildtrees
+          key: zano-vcpkg-x64-static-md-boost1.82-openssl-v1
+          restore-keys: |
+            zano-vcpkg-x64-static-md-
 
-      - name: Set up OpenSSL via vcpkg
+      - name: Set up Boost + OpenSSL via vcpkg
+        # The earlier MarkusJx/install-boost@v2.4.5 path failed because
+        # 7z refused ~600 Boost symlinks ("Dangerous link path was
+        # ignored"). The SourceForge prebuilt installer redirected to
+        # HTML rather than serving the .exe ("file is corrupted and
+        # unreadable"). vcpkg compile-from-source is slower (~40 min
+        # first run) but bulletproof, and the cache step above brings
+        # subsequent runs down to ~5 min.
+        id: deps
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-          C:\vcpkg\vcpkg.exe install openssl:x64-windows-static-md
+          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          }
+          C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md `
+            boost-system `
+            boost-filesystem `
+            boost-locale `
+            boost-thread `
+            boost-timer `
+            boost-date-time `
+            boost-chrono `
+            boost-regex `
+            boost-serialization `
+            boost-atomic `
+            boost-program-options `
+            boost-log `
+            openssl
+          $installed = "C:/vcpkg/installed/x64-windows-static-md"
+          "BOOST_ROOT=$installed" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
+          "BOOST_LIBRARYDIR=$installed/lib" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
+          "OPENSSL_ROOT_DIR=$installed" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
 
       - name: Configure CMake
         env:
-          BOOST_ROOT_OUT: ${{ steps.boost.outputs.BOOST_ROOT }}
-          BOOST_LIBRARYDIR_OUT: ${{ steps.boost.outputs.BOOST_LIBRARYDIR }}
+          BOOST_ROOT_OUT: ${{ steps.deps.outputs.BOOST_ROOT }}
+          BOOST_LIBRARYDIR_OUT: ${{ steps.deps.outputs.BOOST_LIBRARYDIR }}
+          OPENSSL_ROOT_DIR_OUT: ${{ steps.deps.outputs.OPENSSL_ROOT_DIR }}
         shell: pwsh
         run: |
-          $openssl = "C:/vcpkg/installed/x64-windows-static-md"
           New-Item -ItemType Directory -Force -Path build | Out-Null
           cmake -S . -B build `
             -G "Visual Studio 17 2022" -A x64 -T host=x64 `
@@ -84,9 +98,12 @@ jobs:
             -DBUILD_GUI=FALSE `
             -DBUILD_TESTS=FALSE `
             -DSTATIC=FALSE `
+            -DBoost_USE_STATIC_LIBS=ON `
             -DBOOST_ROOT="$Env:BOOST_ROOT_OUT" `
             -DBOOST_LIBRARYDIR="$Env:BOOST_LIBRARYDIR_OUT" `
-            -DOPENSSL_ROOT_DIR="$openssl"
+            -DOPENSSL_ROOT_DIR="$Env:OPENSSL_ROOT_DIR_OUT" `
+            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
 
       - name: Build zano_wallet target only
         shell: pwsh
