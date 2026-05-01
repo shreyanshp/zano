@@ -335,6 +335,16 @@ endif()
 add_subdirectory(contrib)
 add_subdirectory(src)
 
+# Optional Windows-only target: zano_wallet.dll for the Flutter
+# desktop runner at bitcoin-portal/mobile-news. Off by default so
+# Linux / macOS / mobile builds are unaffected. Configure with
+# `-DBUILD_ZANO_WALLET_DLL=ON` to opt in.
+set(BUILD_ZANO_WALLET_DLL FALSE CACHE BOOL
+    "Build zano_wallet.dll for the Flutter Windows runner")
+if(BUILD_ZANO_WALLET_DLL AND WIN32)
+  add_subdirectory(src/wallet/zano_wallet_dll)
+endif()
+
 if (BUILD_TESTS)
   add_subdirectory(tests)
 endif()
