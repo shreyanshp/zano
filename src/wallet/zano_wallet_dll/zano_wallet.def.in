@@ -1,0 +1,20 @@
+LIBRARY zano_wallet
+EXPORTS
+    zano_free_string
+    zano_test_init_ip_port
+    zano_get_version
+    zano_delete_wallet
+    zano_get_address_info
+    zano_get_connectivity_status
+    zano_open
+    zano_restore
+    zano_generate
+    zano_get_wallet_status
+    zano_close_wallet
+    zano_invoke
+    zano_async_call
+    zano_try_pull_result
+    zano_sync_call
+    zano_is_wallet_exist
+    zano_get_wallet_info
+    zano_get_current_tx_fee
