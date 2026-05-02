@@ -55,7 +55,10 @@ jobs:
             C:\vcpkg\installed
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          key: zano-vcpkg-x64-static-md-boost1.82-openssl-v1
+          # Cache key bumped — switched from per-lib boost-* installs
+          # to the `boost` meta-package, which pulls a much wider
+          # header-only set Zano actually needs.
+          key: zano-vcpkg-x64-static-md-boost-meta-openssl-v2
           restore-keys: |
             zano-vcpkg-x64-static-md-
 
@@ -74,19 +77,13 @@ jobs:
             git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
             C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           }
+          # `boost` meta-package pulls all the header-only libs Zano
+          # needs (uuid, multiprecision, asio, msm, ...) on top of the
+          # compiled subset (system, filesystem, thread, ...). Cheaper
+          # than enumerating every Boost dependency Zano touches and
+          # re-running CI when one's missing.
           C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md `
-            boost-system `
-            boost-filesystem `
-            boost-locale `
-            boost-thread `
-            boost-timer `
-            boost-date-time `
-            boost-chrono `
-            boost-regex `
-            boost-serialization `
-            boost-atomic `
-            boost-program-options `
-            boost-log `
+            boost `
             openssl
           $installed = "C:/vcpkg/installed/x64-windows-static-md"
           "BOOST_ROOT=$installed" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
