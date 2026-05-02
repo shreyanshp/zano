@@ -55,13 +55,15 @@ jobs:
             C:\vcpkg\installed
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          # Cache key bumped — pinned vcpkg to 2023.12.12 to get
-          # Boost 1.83 (the last release where boost::asio::io_service
-          # is still defined; 1.85+ removed it and Zano + epee depend
-          # on the legacy API).
-          key: zano-vcpkg-2023.12.12-x64-static-md-boost1.83-openssl-v3
-          restore-keys: |
-            zano-vcpkg-x64-static-md-
+          # vcpkg pinned to 2022.07.25 (Boost 1.79) — that release
+          # ships `boost/asio/io_service.hpp` as a real header. Newer
+          # Boost (1.83+) drops the legacy header even with the
+          # io_context typedef in place; Zano + epee + tor-connect
+          # `#include` the file path directly.
+          # Strict-key match only — NO restore-keys, otherwise the
+          # stale cache from earlier runs (Boost 1.85+) gets restored
+          # and overrides our pin.
+          key: zano-vcpkg-2022.07.25-x64-static-md-boost1.79-openssl-v5
 
       - name: Set up Boost + OpenSSL via vcpkg
         # The earlier MarkusJx/install-boost@v2.4.5 path failed because
