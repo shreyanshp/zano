@@ -55,10 +55,11 @@ jobs:
             C:\vcpkg\installed
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          # Cache key bumped — switched from per-lib boost-* installs
-          # to the `boost` meta-package, which pulls a much wider
-          # header-only set Zano actually needs.
-          key: zano-vcpkg-x64-static-md-boost-meta-openssl-v2
+          # Cache key bumped — pinned vcpkg to 2023.12.12 to get
+          # Boost 1.83 (the last release where boost::asio::io_service
+          # is still defined; 1.85+ removed it and Zano + epee depend
+          # on the legacy API).
+          key: zano-vcpkg-2023.12.12-x64-static-md-boost1.83-openssl-v3
           restore-keys: |
             zano-vcpkg-x64-static-md-
 
@@ -73,15 +74,27 @@ jobs:
         id: deps
         shell: pwsh
         run: |
-          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
-            git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
+          # Pin vcpkg to release 2023.12.12 — the last tag whose
+          # boost port is 1.83. Newer vcpkg ships Boost 1.85+ where
+          # boost::asio::io_service was finally removed; Zano + epee
+          # haven't ported to io_context yet, so the build fails with
+          # "io_service is not a member of boost::asio". 1.83 is the
+          # safe upper bound (1.84 deprecated it, 1.85 removed it).
+          if (-not (Test-Path C:\vcpkg\.git)) {
+            # Wipe any pre-installed vcpkg from the runner image so we
+            # get our pinned commit cleanly. Cached step above keeps
+            # subsequent builds fast.
+            if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            cd C:\vcpkg
+            git checkout 2023.12.12
+            cd ..
             C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           }
           # `boost` meta-package pulls all the header-only libs Zano
           # needs (uuid, multiprecision, asio, msm, ...) on top of the
           # compiled subset (system, filesystem, thread, ...). Cheaper
-          # than enumerating every Boost dependency Zano touches and
-          # re-running CI when one's missing.
+          # than enumerating every Boost dependency Zano touches.
           C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md `
             boost `
             openssl
