@@ -36,8 +36,12 @@ target_include_directories(zano_wallet PRIVATE
   ${OPENSSL_INCLUDE_DIR})
 
 # Mirror the simplewallet link line — same dep tree, no GUI bits.
+# `rpc` is required because src/wallet pulls in currency::core_rpc_server
+# (LNK2019 on wallets_manager without it). simplewallet's link line in
+# src/CMakeLists.txt also lists rpc — match it exactly.
 target_link_libraries(zano_wallet PRIVATE
   wallet
+  rpc
   currency_core
   crypto
   common
