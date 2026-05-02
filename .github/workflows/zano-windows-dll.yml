@@ -43,16 +43,48 @@ jobs:
         with:
           arch: x64
 
-      - name: Install OpenSSL via Chocolatey
+      - name: Set up OpenSSL (Strawberry Perl bundle, pre-installed on runner)
+        # The GitHub-hosted Windows runner image ships Strawberry Perl
+        # at C:\Strawberry\c which includes a pre-built OpenSSL we can
+        # link against directly. This dodges the slproweb.com /
+        # firedaemon-style URL rot that bites every Chocolatey-based
+        # install path (the version-specific .exe URLs go 404 every
+        # few months as old patch releases get pruled).
+        # Falls back to Chocolatey if the runner image changes
+        # (no version pin so we get whichever build is currently
+        # live, not a stale .exe URL).
         shell: pwsh
         run: |
-          # Win runner image already has OpenSSL 3.x at
-          # C:\Program Files\OpenSSL-Win64; if not, choco picks the
-          # current vendor-supplied build.
-          if (-not (Test-Path "$Env:OPENSSL_ROOT_DIR\include\openssl\ssl.h")) {
-            choco install openssl --no-progress -y --version=3.3.1
+          $candidates = @(
+            "C:/Program Files/OpenSSL-Win64",
+            "C:/Program Files/OpenSSL",
+            "C:/Strawberry/c"
+          )
+          $found = $null
+          foreach ($c in $candidates) {
+            if (Test-Path "$c/include/openssl/ssl.h") {
+              $found = $c
+              break
+            }
           }
-          Get-ChildItem "$Env:OPENSSL_ROOT_DIR\include\openssl" | Select-Object -First 5
+          if (-not $found) {
+            Write-Host "No pre-installed OpenSSL found; falling back to Chocolatey (latest)."
+            choco install openssl --no-progress -y
+            foreach ($c in $candidates) {
+              if (Test-Path "$c/include/openssl/ssl.h") {
+                $found = $c
+                break
+              }
+            }
+          }
+          if (-not $found) {
+            Write-Error "OpenSSL not available on this runner image."
+            exit 1
+          }
+          Write-Host "Using OpenSSL at: $found"
+          # Override the env-default with the actually-resolved path.
+          "OPENSSL_ROOT_DIR=$found" | Out-File -FilePath $Env:GITHUB_ENV -Append
+          Get-ChildItem "$found/include/openssl" | Select-Object -First 5
 
       - name: Cache Boost build
         id: cache-boost
