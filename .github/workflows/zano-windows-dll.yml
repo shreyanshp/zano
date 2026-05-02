@@ -131,11 +131,15 @@ jobs:
             -j 4 `
             install
           Pop-Location
-          # Sanity check
-          if (-not (Test-Path "$Env:BOOST_ROOT\include\boost\version.hpp")) {
-            Write-Error "Boost headers missing at $Env:BOOST_ROOT/include"
+          # Sanity check — b2 install layout varies (versioned subdir
+          # under --build-type=minimal vs flat under default). Search
+          # recursively so either path satisfies the check.
+          $headers = Get-ChildItem -Path "$Env:BOOST_ROOT\include" -Recurse -Filter version.hpp -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*boost*" }
+          if (-not $headers) {
+            Write-Error "Boost headers missing under $Env:BOOST_ROOT/include"
             exit 1
           }
+          Write-Host "Boost headers found at: $($headers[0].DirectoryName)"
           if (-not (Test-Path "$Env:BOOST_ROOT\lib")) {
             Write-Error "Boost libs missing at $Env:BOOST_ROOT/lib"
             exit 1
