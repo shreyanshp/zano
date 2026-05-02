@@ -1,9 +1,13 @@
 name: Zano Windows DLL build
 
 # Builds zano_wallet.dll for the Flutter desktop runner at
-# bitcoin-portal/mobile-news (issue #574). Manual-trigger only:
-# pulls Boost (~250MB) + OpenSSL via vcpkg; takes ~60-90 min on a
-# clean Windows runner.
+# bitcoin-portal/mobile-news (issue #574). Manual-trigger only.
+#
+# Boost is built from source on first run (~25 min), cached for
+# subsequent runs (~1 min restore). OpenSSL via Chocolatey (~30s).
+# Sidesteps vcpkg entirely — vcpkg's msys2 / 7-zip / GitHub mirror
+# URLs rot every few months; building Boost directly from
+# archives.boost.io is the only stable path.
 
 on:
   workflow_dispatch:
@@ -22,102 +26,91 @@ jobs:
 
     env:
       EVENT_NAME: ${{ github.event_name }}
-      BOOST_VERSION: '1.82.0'
+      BOOST_VERSION: '1.84.0'
+      BOOST_VERSION_UNDERSCORE: '1_84_0'
+      BOOST_ROOT: 'C:/local/boost'
+      OPENSSL_ROOT_DIR: 'C:/Program Files/OpenSSL-Win64'
 
     steps:
       - name: Checkout (full history + submodules)
         uses: actions/checkout@v4
         with:
-          # libmdbx (contrib/db/libmdbx) calls `git describe --tags
-          # --long --dirty` during cmake configure — fetch-depth: 1
-          # leaves no tags reachable and the configure step aborts
-          # with "Please fetch tags". Full history fixes it.
-          fetch-depth: 0
-          # contrib/tor-connect, contrib/miniupnp, contrib/jwt-cpp,
-          # contrib/bitcoin-secp256k1 are git submodules. Without
-          # this flag, contrib/CMakeLists.txt's add_subdirectory
-          # calls fail on missing dirs and configure aborts with
-          # "set_property could not find TARGET libminiupnpc-static".
           submodules: recursive
+          fetch-depth: 0
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # Cache the entire vcpkg install so subsequent runs skip the
-      # ~40 min boost+openssl compile. Key on the manifest hash so any
-      # bump to the dep list invalidates cleanly.
-      - name: Cache vcpkg install
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:\vcpkg\installed
-            C:\vcpkg\packages
-            C:\vcpkg\buildtrees
-          # vcpkg pinned to 2024.02.14 (Boost 1.84). Earlier vcpkg
-          # tags either lacked classic-mode support (2022.07.25) or
-          # had the dead 7-zip 2107 download URL hardcoded (2023.04.15
-          # → 7-zip.org returns 404 for /a/7z2107-extra.7z). 2024.02.14
-          # bundles a vcpkg-tool that points at the still-live 2301
-          # archive AND its boost-asio is 1.84 — the last release
-          # where `boost/asio/io_service.hpp` exists as a real header
-          # (removed in 1.85, April 2024).
-          # Strict-key match only — NO restore-keys, otherwise the
-          # stale cache from earlier runs (Boost 1.85+) restores
-          # and overrides our pin.
-          key: zano-vcpkg-2024.02.14-x64-static-md-boost1.84-openssl-v7
-
-      - name: Set up Boost + OpenSSL via vcpkg
-        # The earlier MarkusJx/install-boost@v2.4.5 path failed because
-        # 7z refused ~600 Boost symlinks ("Dangerous link path was
-        # ignored"). The SourceForge prebuilt installer redirected to
-        # HTML rather than serving the .exe ("file is corrupted and
-        # unreadable"). vcpkg compile-from-source is slower (~40 min
-        # first run) but bulletproof, and the cache step above brings
-        # subsequent runs down to ~5 min.
-        id: deps
+      - name: Install OpenSSL via Chocolatey
         shell: pwsh
         run: |
-          # Pin vcpkg to release 2024.02.14 — last release with
-          # Boost 1.84 (still ships boost/asio/io_service.hpp) AND
-          # working 7-zip download URL (2023.04.15 hardcoded a dead
-          # 7z2107 URL).
-          # Validate the pinned commit before reusing any vcpkg from
-          # the runner image; if mismatched, wipe + reclone.
-          $expectedTag = "2024.02.14"
-          $needFresh = $true
-          if (Test-Path C:\vcpkg\.git) {
-            Push-Location C:\vcpkg
-            $tagAtHead = (git describe --tags --exact-match 2>$null) -as [string]
-            Pop-Location
-            if ($tagAtHead -eq $expectedTag) { $needFresh = $false }
+          # Win runner image already has OpenSSL 3.x at
+          # C:\Program Files\OpenSSL-Win64; if not, choco picks the
+          # current vendor-supplied build.
+          if (-not (Test-Path "$Env:OPENSSL_ROOT_DIR\include\openssl\ssl.h")) {
+            choco install openssl --no-progress -y --version=3.3.1
           }
-          if ($needFresh) {
-            if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
-            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-            Push-Location C:\vcpkg
-            git checkout $expectedTag
-            Pop-Location
-            C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          Get-ChildItem "$Env:OPENSSL_ROOT_DIR\include\openssl" | Select-Object -First 5
+
+      - name: Cache Boost build
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BOOST_ROOT }}
+          key: zano-boost-1.84.0-msvc14.3-x64-static-md-v1
+
+      - name: Download + build Boost (only if cache miss)
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://archives.boost.io/release/$Env:BOOST_VERSION/source/boost_${Env:BOOST_VERSION_UNDERSCORE}.zip"
+          $zip = "$Env:RUNNER_TEMP/boost.zip"
+          $extracted = "$Env:RUNNER_TEMP/boost_${Env:BOOST_VERSION_UNDERSCORE}"
+          Write-Host "Downloading Boost from $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $Env:RUNNER_TEMP -Force
+          Push-Location $extracted
+          .\bootstrap.bat
+          # Build only the Boost libs Zano links against; saves ~30 min
+          # vs --build-all-libs.
+          .\b2.exe `
+            --prefix="$Env:BOOST_ROOT" `
+            --build-type=minimal `
+            --with-system `
+            --with-filesystem `
+            --with-locale `
+            --with-thread `
+            --with-timer `
+            --with-date_time `
+            --with-chrono `
+            --with-regex `
+            --with-serialization `
+            --with-atomic `
+            --with-program_options `
+            --with-log `
+            link=static `
+            runtime-link=shared `
+            threading=multi `
+            address-model=64 `
+            architecture=x86 `
+            toolset=msvc-14.3 `
+            -j 4 `
+            install
+          Pop-Location
+          # Sanity check
+          if (-not (Test-Path "$Env:BOOST_ROOT\include\boost\version.hpp")) {
+            Write-Error "Boost headers missing at $Env:BOOST_ROOT/include"
+            exit 1
           }
-          # `boost` meta-package pulls all the header-only libs Zano
-          # needs (uuid, multiprecision, asio, msm, ...) on top of the
-          # compiled subset (system, filesystem, thread, ...). Cheaper
-          # than enumerating every Boost dependency Zano touches.
-          C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md `
-            boost `
-            openssl
-          $installed = "C:/vcpkg/installed/x64-windows-static-md"
-          "BOOST_ROOT=$installed" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
-          "BOOST_LIBRARYDIR=$installed/lib" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
-          "OPENSSL_ROOT_DIR=$installed" | Out-File -FilePath $Env:GITHUB_OUTPUT -Append
+          if (-not (Test-Path "$Env:BOOST_ROOT\lib")) {
+            Write-Error "Boost libs missing at $Env:BOOST_ROOT/lib"
+            exit 1
+          }
+          Get-ChildItem "$Env:BOOST_ROOT\lib" | Select-Object -First 10
 
       - name: Configure CMake
-        env:
-          BOOST_ROOT_OUT: ${{ steps.deps.outputs.BOOST_ROOT }}
-          BOOST_LIBRARYDIR_OUT: ${{ steps.deps.outputs.BOOST_LIBRARYDIR }}
-          OPENSSL_ROOT_DIR_OUT: ${{ steps.deps.outputs.OPENSSL_ROOT_DIR }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build | Out-Null
@@ -129,11 +122,9 @@ jobs:
             -DBUILD_TESTS=FALSE `
             -DSTATIC=FALSE `
             -DBoost_USE_STATIC_LIBS=ON `
-            -DBOOST_ROOT="$Env:BOOST_ROOT_OUT" `
-            -DBOOST_LIBRARYDIR="$Env:BOOST_LIBRARYDIR_OUT" `
-            -DOPENSSL_ROOT_DIR="$Env:OPENSSL_ROOT_DIR_OUT" `
-            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+            -DBOOST_ROOT="$Env:BOOST_ROOT" `
+            -DBOOST_LIBRARYDIR="$Env:BOOST_ROOT/lib" `
+            -DOPENSSL_ROOT_DIR="$Env:OPENSSL_ROOT_DIR"
 
       - name: Build zano_wallet target only
         shell: pwsh
@@ -145,7 +136,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
           $dll = Get-ChildItem -Recurse build -Filter zano_wallet.dll | Select-Object -First 1
           $pdb = Get-ChildItem -Recurse build -Filter zano_wallet.pdb | Select-Object -First 1
-          if ($dll) { Copy-Item $dll.FullName artifact/ -Force }
+          if (-not $dll) { Write-Error "zano_wallet.dll not found"; exit 1 }
+          Copy-Item $dll.FullName artifact/ -Force
           if ($pdb) { Copy-Item $pdb.FullName artifact/ -Force }
           Get-ChildItem artifact
 
