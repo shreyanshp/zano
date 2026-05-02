@@ -55,15 +55,18 @@ jobs:
             C:\vcpkg\installed
             C:\vcpkg\packages
             C:\vcpkg\buildtrees
-          # vcpkg pinned to 2022.07.25 (Boost 1.79) — that release
-          # ships `boost/asio/io_service.hpp` as a real header. Newer
-          # Boost (1.83+) drops the legacy header even with the
-          # io_context typedef in place; Zano + epee + tor-connect
-          # `#include` the file path directly.
+          # vcpkg pinned to 2023.04.15 (Boost 1.81). 2022.07.25 was
+          # better Boost-version-wise but its bundled vcpkg-tool
+          # (2022-07-21) errors out with "This vcpkg distribution
+          # does not have a classic mode instance" — classic mode
+          # was reintroduced in vcpkg-tool 2022-09-01+. 2023.04.15
+          # has both: classic mode works AND boost-asio still ships
+          # `boost/asio/io_service.hpp` as a header (the legacy
+          # header was dropped around 1.83+).
           # Strict-key match only — NO restore-keys, otherwise the
-          # stale cache from earlier runs (Boost 1.85+) gets restored
+          # stale cache from earlier runs (Boost 1.85+) restores
           # and overrides our pin.
-          key: zano-vcpkg-2022.07.25-x64-static-md-boost1.79-openssl-v5
+          key: zano-vcpkg-2023.04.15-x64-static-md-boost1.81-openssl-v6
 
       - name: Set up Boost + OpenSSL via vcpkg
         # The earlier MarkusJx/install-boost@v2.4.5 path failed because
@@ -76,13 +79,15 @@ jobs:
         id: deps
         shell: pwsh
         run: |
-          # Pin vcpkg to release 2022.07.25 — that release's boost
-          # port is 1.79, which ships `boost/asio/io_service.hpp` as
-          # an actual header file. Newer vcpkg removes that header
-          # even when keeping the io_service typedef.
+          # Pin vcpkg to release 2023.04.15 — its boost-asio port
+          # is 1.81 which still ships `boost/asio/io_service.hpp` as
+          # a real header. 2022.07.25 had Boost 1.79 (also has the
+          # header) but its bundled vcpkg-tool dropped classic-mode
+          # support; 2023.04.15 has both classic mode and a new-enough
+          # boost.
           # Validate the pinned commit before reusing any vcpkg from
           # the runner image; if mismatched, wipe + reclone.
-          $expectedTag = "2022.07.25"
+          $expectedTag = "2023.04.15"
           $needFresh = $true
           if (Test-Path C:\vcpkg\.git) {
             Push-Location C:\vcpkg
