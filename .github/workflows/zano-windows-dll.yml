@@ -25,7 +25,7 @@ jobs:
       BOOST_VERSION: '1.82.0'
 
     steps:
-      - name: Checkout (full history for libmdbx git describe)
+      - name: Checkout (full history + submodules)
         uses: actions/checkout@v4
         with:
           # libmdbx (contrib/db/libmdbx) calls `git describe --tags
@@ -33,6 +33,12 @@ jobs:
           # leaves no tags reachable and the configure step aborts
           # with "Please fetch tags". Full history fixes it.
           fetch-depth: 0
+          # contrib/tor-connect, contrib/miniupnp, contrib/jwt-cpp,
+          # contrib/bitcoin-secp256k1 are git submodules. Without
+          # this flag, contrib/CMakeLists.txt's add_subdirectory
+          # calls fail on missing dirs and configure aborts with
+          # "set_property could not find TARGET libminiupnpc-static".
+          submodules: recursive
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
