@@ -74,21 +74,26 @@ jobs:
         id: deps
         shell: pwsh
         run: |
-          # Pin vcpkg to release 2023.12.12 — the last tag whose
-          # boost port is 1.83. Newer vcpkg ships Boost 1.85+ where
-          # boost::asio::io_service was finally removed; Zano + epee
-          # haven't ported to io_context yet, so the build fails with
-          # "io_service is not a member of boost::asio". 1.83 is the
-          # safe upper bound (1.84 deprecated it, 1.85 removed it).
-          if (-not (Test-Path C:\vcpkg\.git)) {
-            # Wipe any pre-installed vcpkg from the runner image so we
-            # get our pinned commit cleanly. Cached step above keeps
-            # subsequent builds fast.
+          # Pin vcpkg to release 2022.07.25 — that release's boost
+          # port is 1.79, which ships `boost/asio/io_service.hpp` as
+          # an actual header file. Newer vcpkg removes that header
+          # even when keeping the io_service typedef.
+          # Validate the pinned commit before reusing any vcpkg from
+          # the runner image; if mismatched, wipe + reclone.
+          $expectedTag = "2022.07.25"
+          $needFresh = $true
+          if (Test-Path C:\vcpkg\.git) {
+            Push-Location C:\vcpkg
+            $tagAtHead = (git describe --tags --exact-match 2>$null) -as [string]
+            Pop-Location
+            if ($tagAtHead -eq $expectedTag) { $needFresh = $false }
+          }
+          if ($needFresh) {
             if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
             git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-            cd C:\vcpkg
-            git checkout 2023.12.12
-            cd ..
+            Push-Location C:\vcpkg
+            git checkout $expectedTag
+            Pop-Location
             C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           }
           # `boost` meta-package pulls all the header-only libs Zano
