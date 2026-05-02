@@ -25,10 +25,14 @@ jobs:
       BOOST_VERSION: '1.82.0'
 
     steps:
-      - name: Checkout
+      - name: Checkout (full history for libmdbx git describe)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # libmdbx (contrib/db/libmdbx) calls `git describe --tags
+          # --long --dirty` during cmake configure — fetch-depth: 1
+          # leaves no tags reachable and the configure step aborts
+          # with "Please fetch tags". Full history fixes it.
+          fetch-depth: 0
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
