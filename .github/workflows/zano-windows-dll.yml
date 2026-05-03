@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout (full history + submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 0
@@ -88,7 +88,7 @@ jobs:
 
       - name: Cache Boost build
         id: cache-boost
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.BOOST_ROOT }}
           key: zano-boost-1.84.0-msvc14.3-x64-static-md-v1
@@ -179,7 +179,7 @@ jobs:
 
       - name: Upload artifact
         if: env.EVENT_NAME != 'release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zano_wallet-windows-x64
           path: artifact/*
